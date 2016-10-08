@@ -1,7 +1,10 @@
 package cache
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -33,7 +36,6 @@ func InitRedisPool() {
 				return nil, err
 			}
 			// 选择db
-			log.Println(REDIS_DB)
 			c.Do("SELECT", REDIS_DB)
 			return c, nil
 		},
@@ -63,7 +65,7 @@ func (c *Cache) Save() {
 	}
 }
 
-func GetCache(id string) *Cache {
+func GetCache(expdate int64, id string, r *http.Request) *Cache {
 	rc := RedisClient.Get()
 	defer rc.Close()
 	data, err := redis.String(rc.Do("GET", id))
@@ -72,9 +74,69 @@ func GetCache(id string) *Cache {
 	}
 	c := &Cache{}
 	if err = json.Unmarshal([]byte(data), c); err != nil {
-		log.Println(err)
-		return nil
+		log.Println("No-Cache")
+		if Q.Contains(id) {
+			c.Data = []byte("<script>请刷新后重试！</script>")
+		} else {
+			Q.Add(id)
+			c = GetCacheByUrl(r)
+			c.Id = id
+			c.Save()
+			Q.Remove(id)
+		}
+	} else {
+		log.Println("Cached")
+		var lastTime = GetCacheStoredTime(id)
+		if time.Now().Unix()-lastTime > expdate {
+			log.Println("Refresh-Cache")
+			go func() {
+				c = GetCacheByUrl(r)
+				c.Id = id
+				c.Save()
+			}()
+		}
 	}
+	return c
+}
+
+func GetCacheByUrl(r *http.Request) *Cache {
+	c := &Cache{}
+	header := make(map[string]string)
+	var cookies []*http.Cookie
+	// 缓存过期，重新获取页面，并保存到缓存
+	resp, err := http.Get(Options.Proxy + r.URL.String())
+	if err != nil {
+		log.Println(err)
+	}
+	cookies = resp.Cookies()
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			header[k] = vv
+		}
+	}
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil && err != io.EOF {
+		log.Println(err)
+	}
+	// 文件类型日志
+	contentType := http.DetectContentType(data)
+	// 如果开启css文件合并，将页面中引入的css文本合并到当前页面中 goquery只支持utf8的页面解析
+	if Options.IsConcatCss && "text/html; charset=utf-8" == contentType {
+		resp.Body = ioutil.NopCloser(bytes.NewBuffer(data))
+		html, err := ConcatCss(resp, Options.Proxy)
+		if err != nil {
+			resp.StatusCode = http.StatusInternalServerError //解析错误时，修改返回状态为500
+		}
+		data = []byte(html)
+	}
+	c.Cookies = cookies
+	c.Header = header
+	c.Data = data
+	c.ContentType = contentType
+	c.StatusCode = resp.StatusCode
 	return c
 }
 
@@ -83,7 +145,6 @@ func GetCacheStoredTime(id string) int64 {
 	defer rc.Close()
 	date, err := redis.Int64(rc.Do("GET", id+"_date"))
 	if err != nil {
-		log.Println(err)
 		return 0
 	}
 	return date
