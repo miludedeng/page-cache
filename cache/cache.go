@@ -66,6 +66,13 @@ func (c *Cache) Save() {
 }
 
 func GetCache(expdate int64, id string, r *http.Request) *Cache {
+	// 参数中含有nocache=true,则不使用缓存功能
+	if nocache, err := strconv.ParseBool(r.URL.Query().Get("nocache")); err == nil && nocache {
+		log.Println("nocache=true")
+		c := GetCacheByUrl(r)
+		c.Id = id
+		return c
+	}
 	rc := RedisClient.Get()
 	defer rc.Close()
 	data, err := redis.String(rc.Do("GET", id))
@@ -75,6 +82,7 @@ func GetCache(expdate int64, id string, r *http.Request) *Cache {
 	c := &Cache{}
 	if err = json.Unmarshal([]byte(data), c); err != nil {
 		log.Println("No-Cache")
+		// 防止重复缓存
 		if Q.Contains(id) {
 			c.Data = []byte("<script>请刷新后重试！</script>")
 		} else {
@@ -87,6 +95,7 @@ func GetCache(expdate int64, id string, r *http.Request) *Cache {
 	} else {
 		log.Println("Cached")
 		var lastTime = GetCacheStoredTime(id)
+		// 缓存过期， 刷新缓存
 		if time.Now().Unix()-lastTime > expdate {
 			log.Println("Refresh-Cache")
 			go func() {
