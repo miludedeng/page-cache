@@ -9,38 +9,9 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/garyburd/redigo/redis"
+	"errors"
 )
 
-var (
-	// 定义常量
-	RedisClient *redis.Pool
-	REDIS_HOST  string
-	REDIS_DB    int
-)
-
-func InitRedisPool() {
-	// 从配置文件获取redis的ip以及db
-	REDIS_HOST = Options.RedisHost + ":" + strconv.Itoa(Options.RedisPort)
-	REDIS_DB = Options.RedisDB
-	// 建立连接池
-	RedisClient = &redis.Pool{
-		// 从配置文件获取maxidle以及maxactive，取不到则用后面的默认值
-		MaxIdle:     Options.MaxIdle,
-		MaxActive:   Options.MaxActive,
-		IdleTimeout: 180 * time.Second,
-		Dial: func() (redis.Conn, error) {
-			c, err := redis.Dial("tcp", REDIS_HOST)
-			if err != nil {
-				return nil, err
-			}
-			// 选择db
-			c.Do("SELECT", REDIS_DB)
-			return c, nil
-		},
-	}
-}
 
 type Cache struct {
 	Id          string
@@ -51,18 +22,21 @@ type Cache struct {
 	Cookies     []*http.Cookie
 }
 
+var cacheMap = make(map[string]string)
+
 func (c *Cache) Save() {
 	cacheJ, _ := json.Marshal(c)
-	// 从池里获取连接
-	rc := RedisClient.Get()
-	defer rc.Close()
-	log.Println("ID", c.Id)
-	if _, err := rc.Do("SET", c.Id, string(cacheJ)); err != nil {
-		log.Println(err)
+	cacheMap[c.Id] =  string(cacheJ)
+	cacheMap[c.Id+"_date"] = strconv.FormatInt(int64(time.Now().Unix()),10)
+
+}
+
+func Get(key string) (string,error) {
+	data := cacheMap[key]
+	if data == ""{
+		return "", errors.New("no-cache")
 	}
-	if _, err := rc.Do("SET", c.Id+"_date", time.Now().Unix()); err != nil {
-		log.Println(err)
-	}
+	return data,nil
 }
 
 func GetCache(expdate int64, id string, r *http.Request) *Cache {
@@ -73,36 +47,44 @@ func GetCache(expdate int64, id string, r *http.Request) *Cache {
 		c.Id = id
 		return c
 	}
-	rc := RedisClient.Get()
-	defer rc.Close()
-	data, err := redis.String(rc.Do("GET", id))
+
+	data,err := Get(id)
 	if err != nil {
 		log.Println(err)
 	}
 	c := &Cache{}
 	if err = json.Unmarshal([]byte(data), c); err != nil {
-		log.Println("No-Cache")
 		// 防止重复缓存
 		if Q.Contains(id) {
 			c.Data = []byte("<script>请刷新后重试！</script>")
 		} else {
 			Q.Add(id)
 			c = GetCacheByUrl(r)
+			if c == nil {
+				return c
+			}
 			c.Id = id
 			c.Save()
 			Q.Remove(id)
 		}
 	} else {
-		log.Println("Cached")
+		log.Println("By-Cache")
 		var lastTime = GetCacheStoredTime(id)
 		// 缓存过期， 刷新缓存
 		if time.Now().Unix()-lastTime > expdate {
-			log.Println("Refresh-Cache")
-			go func() {
-				c = GetCacheByUrl(r)
-				c.Id = id
-				c.Save()
-			}()
+			if !Q.Contains(id) {
+				Q.Add(id)
+				log.Println("Refresh-Cache")
+				go func() {
+					c = GetCacheByUrl(r)
+					if c == nil {
+						return
+					}
+					c.Id = id
+					c.Save()
+					Q.Remove(id)
+				}()
+			}
 		}
 	}
 	return c
@@ -117,8 +99,11 @@ func GetCacheByUrl(r *http.Request) *Cache {
 	if err != nil {
 		log.Println(err)
 	}
+	if resp == nil {
+		return nil
+	}
 	cookies = resp.Cookies()
-	defer resp.Body.Close()
+	//defer resp.Body.Close()
 
 	for k, v := range resp.Header {
 		for _, vv := range v {
@@ -150,11 +135,16 @@ func GetCacheByUrl(r *http.Request) *Cache {
 }
 
 func GetCacheStoredTime(id string) int64 {
-	rc := RedisClient.Get()
-	defer rc.Close()
-	date, err := redis.Int64(rc.Do("GET", id+"_date"))
+	date,err := Get(id+"_date")
 	if err != nil {
+		log.Println(err)
 		return 0
 	}
-	return date
+	dateI,err :=  strconv.ParseInt(date,10,64)
+	if err != nil {
+		log.Println(err)
+		return 0
+	}
+	return dateI
+
 }
