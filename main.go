@@ -13,8 +13,13 @@ import (
 
 var (
 	port        = flag.String("port", "3000", "set listen port")
-	proxy       = flag.String("proxy", "http://127.0.0.1:8080/", "proxy url")
+	proxy       = flag.String("proxy", "", "proxy url")
 	isConcatCss = flag.Bool("concatcss", false, "concat css true or false, default is false")
+	redisHost   = flag.String("redishost", "127.0.0.1", "set redis host")
+	redisPort   = flag.Int("redisprot", 6379, "set redis port")
+	redisDB     = flag.Int("redisdb", 0, "set redis database, default 0")
+	maxIdle     = flag.Int("maxidle", 1, "redis max idle time, unit is second")
+	maxActive   = flag.Int("maxactive", 1000, "redis max connections")
 )
 
 func main() {
@@ -23,8 +28,14 @@ func main() {
 		Port:        *port,
 		Proxy:       *proxy,
 		IsConcatCss: *isConcatCss,
+		RedisHost:   *redisHost,
+		RedisPort:   *redisPort,
+		RedisDB:     *redisDB,
+		MaxIdle:     *maxIdle,
+		MaxActive:   *maxActive,
 	}
 	cache.Options.CheckOption()
+	cache.InitRedisPool()
 
 	http.HandleFunc("/", handler)
 	log.Println("Start serving on port ", cache.Options.Port)
@@ -39,7 +50,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// 判断缓存是否过期
 	expDate, err := strconv.Atoi(r.Header.Get("EXPDATE"))
 	if err != nil || expDate == 0 {
-		expDate = 300
+		expDate = 120
 	}
 	// 缓存最后存储的时间
 	log.Printf("%s\t%s\t%s\t%s\n", r.RemoteAddr[0:strings.LastIndex(r.RemoteAddr, ":")], r.Method, r.Proto, r.URL)
