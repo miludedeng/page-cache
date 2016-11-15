@@ -98,11 +98,13 @@ func GetCache(expdate int64, id string, r *http.Request) *Cache {
 		// 缓存过期， 刷新缓存
 		if time.Now().Unix() - lastTime > expdate {
 			if !Q.Contains(id) {
+				Q.Add(id)
 				log.Println("Refresh-Cache")
 				go func() {
 					c = GetCacheByUrl(r)
 					c.Id = id
 					c.Save()
+					Q.Remove(id)
 				}()
 			}
 		}
