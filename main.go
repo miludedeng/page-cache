@@ -56,12 +56,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s\t%s\t%s\t%s\n", r.RemoteAddr[0:strings.LastIndex(r.RemoteAddr, ":")], r.Method, r.Proto, r.URL)
 	//从缓存中获取页面内容
 	var c = cache.GetCache(int64(expDate), id, r)
-	for k, v := range c.Header {
-		w.Header().Add(k, v)
-	}
-	for _, c := range c.Cookies {
-		w.Header().Add("Set-Cookie", c.Raw)
-	}
 	// 文件类型日志
 	log.Println("Content-Type: " + c.ContentType)
 	w.WriteHeader(c.StatusCode)

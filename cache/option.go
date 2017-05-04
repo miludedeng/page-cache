@@ -12,7 +12,6 @@ type Option struct {
 	Port        string
 	Proxy       string
 	IsConcatCss bool
-
 	RedisHost string //redis地址
 	RedisPort int    //redis 端口
 	RedisDB   int    //redis database

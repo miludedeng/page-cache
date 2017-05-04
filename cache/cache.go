@@ -47,8 +47,6 @@ type Cache struct {
 	ContentType string
 	StatusCode  int
 	Data        []byte
-	Header      map[string]string
-	Cookies     []*http.Cookie
 }
 
 func (c *Cache) Save() {
@@ -114,22 +112,12 @@ func GetCache(expdate int64, id string, r *http.Request) *Cache {
 
 func GetCacheByUrl(r *http.Request) *Cache {
 	c := &Cache{}
-	header := make(map[string]string)
-	var cookies []*http.Cookie
 	// 缓存过期，重新获取页面，并保存到缓存
 	resp, err := http.Get(Options.Proxy + r.URL.String())
 	if err != nil {
 		log.Println(err)
 	}
-	cookies = resp.Cookies()
 	defer resp.Body.Close()
-
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			header[k] = vv
-		}
-	}
-
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil && err != io.EOF {
 		log.Println(err)
@@ -145,8 +133,6 @@ func GetCacheByUrl(r *http.Request) *Cache {
 		}
 		data = []byte(html)
 	}
-	c.Cookies = cookies
-	c.Header = header
 	c.Data = data
 	c.ContentType = contentType
 	c.StatusCode = resp.StatusCode
